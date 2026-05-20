@@ -1,0 +1,36 @@
+<?xml version="1.0" encoding="UTF-8"?><sqlb_project><db path="bot_data.db" readonly="0" foreign_keys="1" case_sensitive_like="0" temp_store="0" wal_autocheckpoint="1000" synchronous="2"/><attached/><window><main_tabs open="structure browser pragmas query" current="0"/></window><tab_structure><column_width id="0" width="300"/><column_width id="1" width="0"/><column_width id="2" width="100"/><column_width id="3" width="2059"/><column_width id="4" width="0"/><expanded_item id="0" parent="1"/><expanded_item id="1" parent="1"/><expanded_item id="2" parent="1"/><expanded_item id="3" parent="1"/></tab_structure><tab_browse><table title="Scores" custom_title="0" dock_id="1" table="4,6:mainScores"/><dock_state state="000000ff00000000fd0000000100000002000001cc0000020bfc0100000001fb000000160064006f0063006b00420072006f00770073006500310100000000000001cc0000012800ffffff000001cc0000000000000004000000040000000800000008fc00000000"/><default_encoding codec=""/><browse_table_settings/></tab_browse><tab_sql><sql name="SQL 1*">-- 1. Таблица пользователей
+CREATE TABLE IF NOT EXISTS Users (
+    vk_id INTEGER PRIMARY KEY,
+    full_name TEXT,
+    team TEXT,
+    mini_team TEXT,
+    role TEXT DEFAULT 'user'
+);
+
+-- 2. Таблица заданий
+CREATE TABLE IF NOT EXISTS Tasks (
+    task_id INTEGER PRIMARY KEY AUTOINCREMENT,
+    type TEXT,       -- 'индивидуальное' или 'групповое'
+    name TEXT,       -- Название задания
+    description TEXT -- Описание задания
+);
+
+-- 3. Таблица отправленных ссылок на проверку
+CREATE TABLE IF NOT EXISTS Submissions (
+    submission_id INTEGER PRIMARY KEY AUTOINCREMENT,
+    vk_id INTEGER,
+    task_id INTEGER,
+    link TEXT,
+    FOREIGN KEY (vk_id) REFERENCES Users(vk_id),
+    FOREIGN KEY (task_id) REFERENCES Tasks(task_id)
+);
+
+-- 4. Таблица начисленных баллов
+CREATE TABLE IF NOT EXISTS Scores (
+    score_id INTEGER PRIMARY KEY AUTOINCREMENT,
+    target_id TEXT,  -- Сюда будем писать либо vk_id человека, либо номер мини-команды (например, 1.1)
+    type TEXT,       -- 'индивидуальное' или 'групповое'
+    amount INTEGER,  -- Сколько баллов начислено
+    task_id INTEGER,
+    FOREIGN KEY (task_id) REFERENCES Tasks(task_id)
+);</sql><current_tab id="0"/></tab_sql></sqlb_project>
