@@ -6,10 +6,10 @@ from vkbottle.bot import Bot, Message
 from vkbottle.tools import DocMessagesUploader
 
 # ТОКЕН: Твой ключ из ВК
-TOKEN = "tokennn"
+TOKEN = "vk1.a.0G02iHS7V_6tvdD7RM6jaD8-Wkr0RMFXBqrLDeElCQi2WH_xL8K69ztNl738atVEhdz313cnj9duiJcka9H4cHe-7t8cJIs_FMUc5lKkOkX5ooiBFLglw-AsaRfEG86SPhwskiLrG_MN--zObuyNt-oAN5ovsGdPe3dl1EQ1XrwEf9V3gI9H0yWV9nqoRJfigHsuZvZ8PzUS2MlIR9v8uw"
 
 # Твой реальный ID ВКонтакте
-ADMIN_IDS = [614064375]
+ADMIN_IDS = [614064375,221447420]
 
 bot = Bot(token=TOKEN)
 
@@ -67,12 +67,14 @@ bot.labeler.message_view.register_middleware(GlobalMenuMiddleware)
 admin_keyboard = (
     Keyboard(one_time=False)
     .add(Text("Выгрузка рейтинг"), color=KeyboardButtonColor.PRIMARY)
-    .row()
     .add(Text("Выгрузка по заданиям"), color=KeyboardButtonColor.PRIMARY)
     .row()
     .add(Text("Зачислить баллы"), color=KeyboardButtonColor.POSITIVE)
     .row()
-    .add(Text("Меню пользователя"), color=KeyboardButtonColor.NEGATIVE)
+    .add(Text("Создать задание"), color=KeyboardButtonColor.POSITIVE)
+    .add(Text("Удалить задание"), color=KeyboardButtonColor.NEGATIVE)
+    .row()
+    .add(Text("Меню пользователя"), color=KeyboardButtonColor.SECONDARY)
 ).get_json()
 
 main_keyboard = (
@@ -91,13 +93,25 @@ type_keyboard = (
     .add(Text("Назад"), color=KeyboardButtonColor.NEGATIVE)
 ).get_json()
 
-tasks_keyboard = (
-    Keyboard(one_time=False)
-    .add(Text("Задание 1"), color=KeyboardButtonColor.SECONDARY)
-    .add(Text("Задание 2"), color=KeyboardButtonColor.SECONDARY)
-    .row()
-    .add(Text("Назад"), color=KeyboardButtonColor.NEGATIVE)
-).get_json()
+
+def get_tasks_keyboard(task_type: str):
+    # Достаем названия заданий из базы
+    tasks = query_db("SELECT name FROM Tasks WHERE type = ?", (task_type.lower(),))
+    kb = Keyboard(one_time=False)
+
+    if not tasks:
+        kb.add(Text("Назад"), color=KeyboardButtonColor.NEGATIVE)
+        return kb.get_json()
+
+    # Строим сетку кнопок (по 2 в ряд)
+    for i, task in enumerate(tasks):
+        kb.add(Text(task[0]), color=KeyboardButtonColor.SECONDARY)
+        if (i + 1) % 2 == 0 and (i + 1) != len(tasks):
+            kb.row()
+
+    kb.row()
+    kb.add(Text("Назад"), color=KeyboardButtonColor.NEGATIVE)
+    return kb.get_json()
 
 back_only_keyboard = (
     Keyboard(one_time=False)
@@ -130,44 +144,84 @@ class AdminState(BaseStateGroup):
     WAITING_SCORE_DATA = 32
     WAITING_TASK_EXPORT_TYPE = 33
     WAITING_TASK_EXPORT_NUM = 34
+    WAITING_NEW_TASK_TYPE = 35
+    WAITING_NEW_TASK_NAME = 36
+    WAITING_NEW_TASK_DESC = 37
+    WAITING_DELETE_TASK_TYPE = 38
+    WAITING_DELETE_TASK_NAME = 39
 
 
 # =====================================================================
 # 4. ОБРАБОТКА КНОПКИ «НАЗАД»
 # =====================================================================
+# =====================================================================
+# 4. ОБРАБОТКА КНОПКИ «НАЗАД» (БРОНЕБОЙНЫЙ МЕТОД)
+# =====================================================================
+
+# --- Возвраты в Главное меню ---
+@bot.on.private_message(state=[TaskState.CHOOSING_TYPE, RatingState.CHOOSING_TYPE], text="Назад")
+async def back_to_main(message: Message):
+    await bot.state_dispenser.delete(message.peer_id)
+    await message.answer("Главное меню:", keyboard=main_keyboard)
+
+# --- Возвраты в ветке Заданий ---
+@bot.on.private_message(state=TaskState.CHOOSING_TASK, text="Назад")
+async def back_to_task_type(message: Message):
+    await bot.state_dispenser.set(message.peer_id, TaskState.CHOOSING_TYPE)
+    await message.answer("Какой тип задания ты хочешь?", keyboard=type_keyboard)
+
+@bot.on.private_message(state=TaskState.WAITING_FOR_LINK, text="Назад")
+async def back_to_tasks_list(message: Message):
+    state_payload = await bot.state_dispenser.get(message.peer_id)
+    old_type = state_payload.payload.get("task_type")
+    await bot.state_dispenser.set(message.peer_id, TaskState.CHOOSING_TASK, task_type=old_type)
+    await message.answer(f"Выбери {old_type} задание:", keyboard=get_tasks_keyboard(old_type))
+
+# --- Возвраты в Админ-панель (Главная) ---
+@bot.on.private_message(state=[
+    AdminState.WAITING_SCORE_TYPE,
+    AdminState.WAITING_RATING_TYPE,
+    AdminState.WAITING_TASK_EXPORT_TYPE,
+    AdminState.WAITING_NEW_TASK_TYPE,
+    AdminState.WAITING_DELETE_TASK_TYPE
+], text="Назад")
+async def back_to_admin_main(message: Message):
+    await bot.state_dispenser.delete(message.peer_id)
+    await message.answer("🛠 Панель Администратора", keyboard=admin_keyboard)
+
+# --- Внутренние возвраты Админа ---
+@bot.on.private_message(state=AdminState.WAITING_SCORE_DATA, text="Назад")
+async def back_to_score_type(message: Message):
+    await bot.state_dispenser.set(message.peer_id, AdminState.WAITING_SCORE_TYPE)
+    await message.answer("Кому зачислить баллы?", keyboard=type_keyboard)
+
+@bot.on.private_message(state=AdminState.WAITING_TASK_EXPORT_NUM, text="Назад")
+async def back_to_export_type(message: Message):
+    await bot.state_dispenser.set(message.peer_id, AdminState.WAITING_TASK_EXPORT_TYPE)
+    await message.answer("Какой тип заданий выгрузить?", keyboard=type_keyboard)
+
+@bot.on.private_message(state=AdminState.WAITING_NEW_TASK_NAME, text="Назад")
+async def back_to_new_task_type(message: Message):
+    await bot.state_dispenser.set(message.peer_id, AdminState.WAITING_NEW_TASK_TYPE)
+    await message.answer("Для какой категории создаем задание?", keyboard=type_keyboard)
+
+@bot.on.private_message(state=AdminState.WAITING_NEW_TASK_DESC, text="Назад")
+async def back_to_new_task_name(message: Message):
+    state_payload = await bot.state_dispenser.get(message.peer_id)
+    old_type = state_payload.payload.get("task_type")
+    await bot.state_dispenser.set(message.peer_id, AdminState.WAITING_NEW_TASK_NAME, task_type=old_type)
+    await message.answer("Напишите короткое название для кнопки (например: Задание 1):", keyboard=back_only_keyboard)
+
+@bot.on.private_message(state=AdminState.WAITING_DELETE_TASK_NAME, text="Назад")
+async def back_to_delete_type(message: Message):
+    await bot.state_dispenser.set(message.peer_id, AdminState.WAITING_DELETE_TASK_TYPE)
+    await message.answer("В какой категории удаляем задание?", keyboard=type_keyboard)
+
+# --- Запасной перехватчик (если что-то пошло не так) ---
 @bot.on.private_message(text="Назад")
-async def go_back(message: Message):
-    vk_id = message.peer_id
-    state_payload = await bot.state_dispenser.get(vk_id)
-
-    if not state_payload:
-        await message.answer("Главное меню:", keyboard=main_keyboard)
-        return
-
-    current_state = state_payload.state
-
-    if current_state in [TaskState.CHOOSING_TYPE, RatingState.CHOOSING_TYPE]:
-        await bot.state_dispenser.delete(vk_id)
-        await message.answer("Главное меню:", keyboard=main_keyboard)
-    elif current_state == TaskState.CHOOSING_TASK:
-        await bot.state_dispenser.set(vk_id, TaskState.CHOOSING_TYPE)
-        await message.answer("Какой тип задания ты хочешь?", keyboard=type_keyboard)
-    elif current_state == TaskState.WAITING_FOR_LINK:
-        old_type = state_payload.payload.get("task_type")
-        await bot.state_dispenser.set(vk_id, TaskState.CHOOSING_TASK, task_type=old_type)
-        await message.answer(f"Выбери {old_type} задание:", keyboard=tasks_keyboard)
-    elif current_state == AdminState.WAITING_SCORE_DATA:
-        await bot.state_dispenser.set(vk_id, AdminState.WAITING_SCORE_TYPE)
-        await message.answer("Кому зачислить баллы?", keyboard=type_keyboard)
-    elif current_state in [AdminState.WAITING_SCORE_TYPE, AdminState.WAITING_RATING_TYPE,
-                           AdminState.WAITING_TASK_EXPORT_TYPE]:
-        await bot.state_dispenser.delete(vk_id)
-        await message.answer("🛠 Панель Администратора", keyboard=admin_keyboard)
-    elif current_state == AdminState.WAITING_TASK_EXPORT_NUM:
-        await bot.state_dispenser.set(vk_id, AdminState.WAITING_TASK_EXPORT_TYPE)
-        await message.answer("Какой тип заданий выгрузить?", keyboard=type_keyboard)
-
-
+async def go_back_fallback(message: Message):
+    await bot.state_dispenser.delete(message.peer_id)
+    await message.answer("Возвращаюсь в главное меню:", keyboard=main_keyboard)
 # =====================================================================
 # 5. ЛОГИКА ВЕТКИ «ЗАДАНИЯ»
 # =====================================================================
@@ -181,21 +235,28 @@ async def task_menu(message: Message):
 async def choose_task_type(message: Message):
     selected_type = message.text.lower()
     await bot.state_dispenser.set(message.peer_id, TaskState.CHOOSING_TASK, task_type=selected_type)
-    await message.answer(f"Выбери {selected_type} задание:", keyboard=tasks_keyboard)
+    # Передаем тип в генератор кнопок
+    await message.answer(f"Выбери {selected_type} задание:", keyboard=get_tasks_keyboard(selected_type))
 
 
-@bot.on.private_message(state=TaskState.CHOOSING_TASK, text=["Задание 1", "Задание 2"])
+@bot.on.private_message(state=TaskState.CHOOSING_TASK)
 async def view_task_details(message: Message):
     task_name = message.text
     state_payload = await bot.state_dispenser.get(message.peer_id)
     selected_type = state_payload.payload.get("task_type")
 
-    await bot.state_dispenser.set(
-        message.peer_id, TaskState.WAITING_FOR_LINK, task_type=selected_type, task_name=task_name
-    )
+    # Достаем реальное описание из БД
+    task_data = query_db("SELECT description FROM Tasks WHERE name = ? AND type = ?", (task_name, selected_type),
+                         one=True)
+    if not task_data:
+        return  # Игнорим, если нажали что-то левое
+
+    await bot.state_dispenser.set(message.peer_id, TaskState.WAITING_FOR_LINK, task_type=selected_type,
+                                  task_name=task_name)
     await message.answer(
-        f"Название: {task_name} ({selected_type})\n"
-        f"Описание: Выполните условия и прикрепите ссылку в ответ на это сообщение.\n\nЖду ссылку:",
+        f"📌 Название: {task_name}\n"
+        f"📝 Описание:\n{task_data[0]}\n\n"
+        f"👇 Жду ссылку на выполненное задание:",
         keyboard=back_only_keyboard
     )
 
@@ -206,22 +267,20 @@ async def receive_link(message: Message):
     user_link = message.text
 
     if not user_link.startswith("http"):
-        await message.answer("Пожалуйста, пришлите корректную ссылку (начинающуюся с http:// или https://)")
+        await message.answer("Пожалуйста, пришлите корректную ссылку (с http:// или https://)")
         return
 
     state_payload = await bot.state_dispenser.get(vk_id)
     task_name = state_payload.payload.get("task_name")
 
-    # Парсим номер задания из текста (например, из "Задание 1" достаем 1)
-    task_id = int(task_name.replace("Задание ", "").strip())
+    # Достаем настоящий ID задания из БД по его имени
+    db_task = query_db("SELECT task_id FROM Tasks WHERE name = ?", (task_name,), one=True)
+    task_id = db_task[0] if db_task else 0
 
-    # Записываем ссылку в БД
     query_db("INSERT INTO Submissions (vk_id, task_id, link) VALUES (?, ?, ?)", (vk_id, task_id, user_link),
              commit=True)
-
     await bot.state_dispenser.delete(vk_id)
-    await message.answer(f"Ссылка на {task_name} успешно сохранена в базу данных для админа!", keyboard=main_keyboard)
-
+    await message.answer(f"Ссылка на {task_name} успешно сохранена!", keyboard=main_keyboard)
 
 # =====================================================================
 # 6. БАЛАНС И РЕЙТИНГ
@@ -376,18 +435,36 @@ async def admin_export_tasks(message: Message):
 @bot.on.private_message(state=AdminState.WAITING_TASK_EXPORT_TYPE, text=["Индивидуальное", "Групповое"])
 async def admin_export_tasks_type(message: Message):
     if message.peer_id not in ADMIN_IDS: return
-    await bot.state_dispenser.set(message.peer_id, AdminState.WAITING_TASK_EXPORT_NUM)
-    await message.answer("Выберите задание для выгрузки:", keyboard=tasks_keyboard)
+    selected_type = message.text.lower()
+
+    # Сохраняем выбранный тип (индивидуальное/групповое) в память бота
+    await bot.state_dispenser.set(message.peer_id, AdminState.WAITING_TASK_EXPORT_NUM, task_type=selected_type)
+    await message.answer("Выберите задание для выгрузки:", keyboard=get_tasks_keyboard(selected_type))
 
 
 @bot.on.private_message(state=AdminState.WAITING_TASK_EXPORT_NUM)
 async def process_task_export(message: Message):
     if message.peer_id not in ADMIN_IDS: return
 
-    task_id = int(message.text.replace("Задание ", "").strip())
-    await message.answer("Формирую выгрузку ссылок...")
+    task_name = message.text
+    state_payload = await bot.state_dispenser.get(message.peer_id)
+    selected_type = state_payload.payload.get("task_type")
+
+    await message.answer(f"Формирую выгрузку ссылок для «{task_name}»...")
 
     try:
+        # Умный поиск: находим настоящий ID задания в БД по его имени и категории
+        db_task = query_db("SELECT task_id FROM Tasks WHERE name = ? AND type = ?", (task_name, selected_type),
+                           one=True)
+
+        if not db_task:
+            await message.answer("❌ Ошибка: Задание не найдено в базе.", keyboard=admin_keyboard)
+            await bot.state_dispenser.delete(message.peer_id)
+            return
+
+        task_id = db_task[0]  # Достаем найденный ID
+
+        # Собираем данные: ФИО, команды и ссылки пользователей
         query = """
         SELECT Users.vk_id as 'ID ВК', Users.full_name as 'ФИО', Users.team as 'Команда', Users.mini_team as 'Мини-команда', Submissions.link as 'Ссылка'
         FROM Submissions
@@ -399,19 +476,19 @@ async def process_task_export(message: Message):
         conn.close()
 
         if df.empty:
-            await message.answer(f"По заданию {task_id} пока нет отправленных ссылок.", keyboard=admin_keyboard)
+            await message.answer(f"По заданию «{task_name}» пока нет отправленных ссылок.", keyboard=admin_keyboard)
             await bot.state_dispenser.delete(message.peer_id)
             return
 
-        filename = f"task_{task_id}_links.xlsx"
+        filename = "task_links.xlsx"
         df.to_excel(filename, index=False)
         uploader = DocMessagesUploader(bot.api)
-        doc = await uploader.upload(file_source=filename, peer_id=message.peer_id,
-                                    title=f"Ссылки_Задание_{task_id}.xlsx")
+        doc = await uploader.upload(file_source=filename, peer_id=message.peer_id, title=f"Ссылки_{task_name}.xlsx")
 
         await message.answer(f"✅ Файл со ссылками готов:", attachment=doc, keyboard=admin_keyboard)
         await bot.state_dispenser.delete(message.peer_id)
         os.remove(filename)
+
     except Exception as e:
         await message.answer(f"❌ Ошибка выгрузки: {e}", keyboard=admin_keyboard)
         await bot.state_dispenser.delete(message.peer_id)
@@ -462,6 +539,73 @@ async def admin_process_scoring(message: Message):
         await message.answer(f"❌ Ошибка: {e}")
 
 
+# --- 4. СОЗДАНИЕ НОВЫХ ЗАДАНИЙ ---
+@bot.on.private_message(text="Создать задание")
+async def admin_create_task_start(message: Message):
+    if message.peer_id not in ADMIN_IDS: return
+    await bot.state_dispenser.set(message.peer_id, AdminState.WAITING_NEW_TASK_TYPE)
+    await message.answer("Для какой категории создаем задание?", keyboard=type_keyboard)
+
+
+@bot.on.private_message(state=AdminState.WAITING_NEW_TASK_TYPE, text=["Индивидуальное", "Групповое"])
+async def admin_create_task_type(message: Message):
+    if message.peer_id not in ADMIN_IDS: return
+    await bot.state_dispenser.set(message.peer_id, AdminState.WAITING_NEW_TASK_NAME, task_type=message.text.lower())
+    await message.answer("Напишите короткое название для кнопки (например: Задание 1):", keyboard=back_only_keyboard)
+
+
+@bot.on.private_message(state=AdminState.WAITING_NEW_TASK_NAME)
+async def admin_create_task_name(message: Message):
+    if message.peer_id not in ADMIN_IDS: return
+    state_payload = await bot.state_dispenser.get(message.peer_id)
+    await bot.state_dispenser.set(message.peer_id, AdminState.WAITING_NEW_TASK_DESC,
+                                  task_type=state_payload.payload["task_type"], task_name=message.text)
+    await message.answer("Теперь отправьте полное описание и условия задания:", keyboard=back_only_keyboard)
+
+
+@bot.on.private_message(state=AdminState.WAITING_NEW_TASK_DESC)
+async def admin_create_task_desc(message: Message):
+    if message.peer_id not in ADMIN_IDS: return
+    state_payload = await bot.state_dispenser.get(message.peer_id)
+    t_type = state_payload.payload["task_type"]
+    t_name = state_payload.payload["task_name"]
+
+    query_db("INSERT INTO Tasks (type, name, description) VALUES (?, ?, ?)", (t_type, t_name, message.text),
+             commit=True)
+    await bot.state_dispenser.delete(message.peer_id)
+    await message.answer(f"✅ Задание «{t_name}» успешно добавлено в меню!", keyboard=admin_keyboard)
+
+
+# --- 5. УДАЛЕНИЕ ЗАДАНИЙ ---
+@bot.on.private_message(text="Удалить задание")
+async def admin_delete_task_start(message: Message):
+    if message.peer_id not in ADMIN_IDS: return
+    await bot.state_dispenser.set(message.peer_id, AdminState.WAITING_DELETE_TASK_TYPE)
+    await message.answer("В какой категории удаляем задание?", keyboard=type_keyboard)
+
+
+@bot.on.private_message(state=AdminState.WAITING_DELETE_TASK_TYPE, text=["Индивидуальное", "Групповое"])
+async def admin_delete_task_type(message: Message):
+    if message.peer_id not in ADMIN_IDS: return
+    selected_type = message.text.lower()
+    await bot.state_dispenser.set(message.peer_id, AdminState.WAITING_DELETE_TASK_NAME, task_type=selected_type)
+
+    # Бот сам генерирует кнопки из базы данных
+    await message.answer("Выберите задание для удаления:", keyboard=get_tasks_keyboard(selected_type))
+
+
+@bot.on.private_message(state=AdminState.WAITING_DELETE_TASK_NAME)
+async def admin_delete_task_confirm(message: Message):
+    if message.peer_id not in ADMIN_IDS: return
+    task_name = message.text
+    state_payload = await bot.state_dispenser.get(message.peer_id)
+    selected_type = state_payload.payload.get("task_type")
+
+    # Удаляем конкретное задание из базы данных
+    query_db("DELETE FROM Tasks WHERE name = ? AND type = ?", (task_name, selected_type), commit=True)
+
+    await bot.state_dispenser.delete(message.peer_id)
+    await message.answer(f"🗑 Задание «{task_name}» успешно удалено!", keyboard=admin_keyboard)
 # =====================================================================
 # 8. РЕГИСТРАЦИЯ И ПРИВЕТСТВИЕ (В САМОМ НИЗУ)
 # =====================================================================
